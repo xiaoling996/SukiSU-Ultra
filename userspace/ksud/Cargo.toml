@@ -1,5 +1,5 @@
 [package]
-name = "zakozako"
+name = "ksud"
 version = "0.1.0"
 edition = "2024"
 
@@ -10,11 +10,15 @@ notify = "6.1"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 const_format = "0.2"
-zip = { version = "2", default-features = false }
-zip-extensions = { version = "0.8", features = [
+zip = { version = "3",  features = [
     "deflate",
     "deflate64",
     "time",
+    "lzma",
+    "xz",
+], default-features = false }
+zip-extensions = { version = "0.8", features = [
+    "deflate",
     "lzma",
     "xz",
 ], default-features = false }
@@ -55,7 +59,8 @@ procfs = "0.17"
 android_logger = { version = "0.14", default-features = false }
 
 [profile.release]
-strip = true
-opt-level = "z"
-lto = true
+overflow-checks = false
 codegen-units = 1
+lto = "fat"
+opt-level = 3
+strip = true

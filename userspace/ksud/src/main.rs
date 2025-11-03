@@ -4,7 +4,10 @@ mod boot_patch;
 mod cli;
 mod debug;
 mod defs;
+mod feature;
 mod init_event;
+#[cfg(target_arch = "aarch64")]
+mod kpm;
 mod ksucalls;
 #[cfg(target_os = "android")]
 mod magic_mount;
@@ -13,8 +16,8 @@ mod profile;
 mod restorecon;
 mod sepolicy;
 mod su;
+mod uid_scanner;
 mod utils;
-mod kpm;
 
 fn main() -> anyhow::Result<()> {
     cli::run()

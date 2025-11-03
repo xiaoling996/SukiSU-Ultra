@@ -1,15 +1,13 @@
 package com.sukisu.ultra.ui.screen
 
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.os.Parcelable
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -33,26 +31,34 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.activity.ComponentActivity
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.generated.destinations.FlashScreenDestination
 import com.ramcosta.composedestinations.generated.destinations.ModuleScreenDestination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import com.ramcosta.composedestinations.navigation.EmptyDestinationsNavigator
+import com.sukisu.ultra.R
+import com.sukisu.ultra.ui.component.KeyEventBlocker
+import com.sukisu.ultra.ui.theme.CardConfig
+import com.sukisu.ultra.ui.util.*
+import com.sukisu.ultra.ui.viewmodel.ModuleViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.parcelize.Parcelize
-import com.sukisu.ultra.ui.component.KeyEventBlocker
-import com.sukisu.ultra.ui.util.*
-import com.sukisu.ultra.R
-import com.sukisu.ultra.ui.theme.CardConfig
-import com.sukisu.ultra.ui.viewmodel.ModuleViewModel
-import androidx.lifecycle.viewmodel.compose.viewModel
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+import androidx.core.content.edit
+import com.sukisu.ultra.ui.util.module.ModuleOperationUtils
+import com.sukisu.ultra.ui.util.module.ModuleUtils
 
+/**
+ * @author ShirkNeko
+ * @date 2025/5/31.
+ */
 enum class FlashingStatus {
     FLASHING,
     SUCCESS,
@@ -66,10 +72,14 @@ data class ModuleInstallStatus(
     val totalModules: Int = 0,
     val currentModule: Int = 0,
     val currentModuleName: String = "",
-    val failedModules: MutableList<String> = mutableListOf()
+    val failedModules: MutableList<String> = mutableListOf(),
+    val verifiedModules: MutableList<String> = mutableListOf() // 添加已验证模块列表
 )
 
 private var moduleInstallStatus = mutableStateOf(ModuleInstallStatus())
+
+// 存储模块URI和验证状态的映射
+private var moduleVerificationMap = mutableMapOf<Uri, Boolean>()
 
 fun setFlashingStatus(status: FlashingStatus) {
     currentFlashingStatus.value = status
@@ -79,7 +89,8 @@ fun updateModuleInstallStatus(
     totalModules: Int? = null,
     currentModule: Int? = null,
     currentModuleName: String? = null,
-    failedModule: String? = null
+    failedModule: String? = null,
+    verifiedModule: String? = null
 ) {
     val current = moduleInstallStatus.value
     moduleInstallStatus.value = current.copy(
@@ -95,6 +106,18 @@ fun updateModuleInstallStatus(
             failedModules = updatedFailedModules
         )
     }
+
+    if (verifiedModule != null) {
+        val updatedVerifiedModules = current.verifiedModules.toMutableList()
+        updatedVerifiedModules.add(verifiedModule)
+        moduleInstallStatus.value = moduleInstallStatus.value.copy(
+            verifiedModules = updatedVerifiedModules
+        )
+    }
+}
+
+fun setModuleVerificationStatus(uri: Uri, isVerified: Boolean) {
+    moduleVerificationMap[uri] = isVerified
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -102,10 +125,39 @@ fun updateModuleInstallStatus(
 @Destination<RootGraph>
 fun FlashScreen(navigator: DestinationsNavigator, flashIt: FlashIt) {
     val context = LocalContext.current
+
+    val shouldAutoExit = remember {
+        val sharedPref = context.getSharedPreferences("kernel_flash_prefs", Context.MODE_PRIVATE)
+        sharedPref.getBoolean("auto_exit_after_flash", false)
+    }
+
+    // 是否通过从外部启动的模块安装
+    val isExternalInstall = remember {
+        when (flashIt) {
+            is FlashIt.FlashModule -> {
+                (context as? ComponentActivity)?.intent?.let { intent ->
+                    intent.action == Intent.ACTION_VIEW || intent.action == Intent.ACTION_SEND
+                } ?: false
+            }
+            is FlashIt.FlashModules -> {
+                (context as? ComponentActivity)?.intent?.let { intent ->
+                    intent.action == Intent.ACTION_VIEW || intent.action == Intent.ACTION_SEND
+                } ?: false
+            }
+            else -> false
+        }
+    }
+
     var text by rememberSaveable { mutableStateOf("") }
     var tempText: String
     val logContent = rememberSaveable { StringBuilder() }
     var showFloatAction by rememberSaveable { mutableStateOf(false) }
+    // 添加状态跟踪是否已经完成刷写
+    var hasFlashCompleted by rememberSaveable { mutableStateOf(false) }
+    var hasExecuted by rememberSaveable { mutableStateOf(false) }
+    // 更新模块状态管理
+    var hasUpdateExecuted by rememberSaveable { mutableStateOf(false) }
+    var hasUpdateCompleted by rememberSaveable { mutableStateOf(false) }
 
     val snackBarHost = LocalSnackbarHost.current
     val scope = rememberCoroutineScope()
@@ -123,18 +175,105 @@ fun FlashScreen(navigator: DestinationsNavigator, flashIt: FlashIt) {
 
     // 重置状态
     LaunchedEffect(flashIt) {
-        if (flashIt is FlashIt.FlashModules && flashIt.currentIndex == 0) {
-            moduleInstallStatus.value = ModuleInstallStatus(
-                totalModules = flashIt.uris.size,
-                currentModule = 1
-            )
+        when (flashIt) {
+            is FlashIt.FlashModules -> {
+                if (flashIt.currentIndex == 0) {
+                    moduleInstallStatus.value = ModuleInstallStatus(
+                        totalModules = flashIt.uris.size,
+                        currentModule = 1
+                    )
+                    hasFlashCompleted = false
+                    hasExecuted = false
+                    moduleVerificationMap.clear()
+                }
+            }
+            is FlashIt.FlashModuleUpdate -> {
+                hasUpdateCompleted = false
+                hasUpdateExecuted = false
+            }
+            else -> {
+                hasFlashCompleted = false
+                hasExecuted = false
+            }
         }
     }
 
-    LaunchedEffect(Unit) {
-        if (text.isNotEmpty()) {
+    // 处理更新模块安装
+    LaunchedEffect(flashIt) {
+        if (flashIt !is FlashIt.FlashModuleUpdate) return@LaunchedEffect
+        if (hasUpdateExecuted || hasUpdateCompleted || text.isNotEmpty()) {
             return@LaunchedEffect
         }
+
+        hasUpdateExecuted = true
+
+        withContext(Dispatchers.IO) {
+            setFlashingStatus(FlashingStatus.FLASHING)
+
+            try {
+                logContent.append(text).append("\n")
+            } catch (_: Exception) {
+                logContent.append(text).append("\n")
+            }
+
+            flashModuleUpdate(flashIt.uri, onFinish = { showReboot, code ->
+                if (code != 0) {
+                    text += "$errorCodeString $code.\n$checkLogString\n"
+                    setFlashingStatus(FlashingStatus.FAILED)
+                } else {
+                    setFlashingStatus(FlashingStatus.SUCCESS)
+
+                    // 处理模块更新成功后的验证标志
+                    val isVerified = moduleVerificationMap[flashIt.uri] ?: false
+                    ModuleOperationUtils.handleModuleUpdate(context, flashIt.uri, isVerified)
+
+                    viewModel.markNeedRefresh()
+                }
+                if (showReboot) {
+                    text += "\n\n\n"
+                    showFloatAction = true
+
+                    // 如果是内部安装，显示重启按钮后不自动返回
+                    if (isExternalInstall) {
+                        return@flashModuleUpdate
+                    }
+                }
+                hasUpdateCompleted = true
+
+                // 如果是外部安装或需要自动退出的模块更新且不需要重启，延迟后自动返回
+                if (isExternalInstall || shouldAutoExit) {
+                    scope.launch {
+                        kotlinx.coroutines.delay(1000)
+                        if (shouldAutoExit) {
+                            val sharedPref = context.getSharedPreferences("kernel_flash_prefs", Context.MODE_PRIVATE)
+                            sharedPref.edit { remove("auto_exit_after_flash") }
+                        }
+                        (context as? ComponentActivity)?.finish()
+                    }
+                }
+            }, onStdout = {
+                tempText = "$it\n"
+                if (tempText.startsWith("[H[J")) { // clear command
+                    text = tempText.substring(6)
+                } else {
+                    text += tempText
+                }
+                logContent.append(it).append("\n")
+            }, onStderr = {
+                logContent.append(it).append("\n")
+            })
+        }
+    }
+
+    // 安装但排除更新模块
+    LaunchedEffect(flashIt) {
+        if (flashIt is FlashIt.FlashModuleUpdate) return@LaunchedEffect
+        if (hasExecuted || hasFlashCompleted || text.isNotEmpty()) {
+            return@LaunchedEffect
+        }
+
+        hasExecuted = true
+
         withContext(Dispatchers.IO) {
             setFlashingStatus(FlashingStatus.FLASHING)
 
@@ -153,7 +292,7 @@ fun FlashScreen(navigator: DestinationsNavigator, flashIt: FlashIt) {
                 }
             }
 
-            flashIt(context, flashIt, onFinish = { showReboot, code ->
+            flashIt(flashIt, onFinish = { showReboot, code ->
                 if (code != 0) {
                     text += "$errorCodeString $code.\n$checkLogString\n"
                     setFlashingStatus(FlashingStatus.FAILED)
@@ -165,12 +304,36 @@ fun FlashScreen(navigator: DestinationsNavigator, flashIt: FlashIt) {
                     }
                 } else {
                     setFlashingStatus(FlashingStatus.SUCCESS)
+
+                    // 处理模块安装成功后的验证标志
+                    when (flashIt) {
+                        is FlashIt.FlashModule -> {
+                            val isVerified = moduleVerificationMap[flashIt.uri] ?: false
+                            ModuleOperationUtils.handleModuleInstallSuccess(context, flashIt.uri, isVerified)
+                            if (isVerified) {
+                                updateModuleInstallStatus(verifiedModule = moduleInstallStatus.value.currentModuleName)
+                            }
+                        }
+                        is FlashIt.FlashModules -> {
+                            val currentUri = flashIt.uris[flashIt.currentIndex]
+                            val isVerified = moduleVerificationMap[currentUri] ?: false
+                            ModuleOperationUtils.handleModuleInstallSuccess(context, currentUri, isVerified)
+                            if (isVerified) {
+                                updateModuleInstallStatus(verifiedModule = moduleInstallStatus.value.currentModuleName)
+                            }
+                        }
+
+                        else -> {}
+                    }
+
                     viewModel.markNeedRefresh()
                 }
                 if (showReboot) {
                     text += "\n\n\n"
                     showFloatAction = true
                 }
+
+                hasFlashCompleted = true
 
                 if (flashIt is FlashIt.FlashModules && flashIt.currentIndex < flashIt.uris.size - 1) {
                     val nextFlashIt = flashIt.copy(
@@ -180,10 +343,30 @@ fun FlashScreen(navigator: DestinationsNavigator, flashIt: FlashIt) {
                         kotlinx.coroutines.delay(500)
                         navigator.navigate(FlashScreenDestination(nextFlashIt))
                     }
+                } else if ((isExternalInstall || shouldAutoExit) && flashIt is FlashIt.FlashModules && flashIt.currentIndex >= flashIt.uris.size - 1) {
+                    // 如果是外部安装或需要自动退出且是最后一个模块，安装完成后自动返回
+                    scope.launch {
+                        kotlinx.coroutines.delay(1000)
+                        if (shouldAutoExit) {
+                            val sharedPref = context.getSharedPreferences("kernel_flash_prefs", Context.MODE_PRIVATE)
+                            sharedPref.edit { remove("auto_exit_after_flash") }
+                        }
+                        (context as? ComponentActivity)?.finish()
+                    }
+                } else if ((isExternalInstall || shouldAutoExit) && flashIt is FlashIt.FlashModule) {
+                    // 如果是外部安装或需要自动退出的单个模块，安装完成后自动返回
+                    scope.launch {
+                        kotlinx.coroutines.delay(1000)
+                        if (shouldAutoExit) {
+                            val sharedPref = context.getSharedPreferences("kernel_flash_prefs", Context.MODE_PRIVATE)
+                            sharedPref.edit { remove("auto_exit_after_flash") }
+                        }
+                        (context as? ComponentActivity)?.finish()
+                    }
                 }
             }, onStdout = {
                 tempText = "$it\n"
-                if (tempText.startsWith("[H[J")) { // clear command
+                if (tempText.startsWith("[H[J")) { // clear command
                     text = tempText.substring(6)
                 } else {
                     text += tempText
@@ -196,13 +379,23 @@ fun FlashScreen(navigator: DestinationsNavigator, flashIt: FlashIt) {
     }
 
     val onBack: () -> Unit = {
-        if (currentFlashingStatus.value != FlashingStatus.FLASHING) {
-            if (flashIt is FlashIt.FlashBoot) {
-                navigator.popBackStack()
+        val canGoBack = when (flashIt) {
+            is FlashIt.FlashModuleUpdate -> currentFlashingStatus.value != FlashingStatus.FLASHING
+            else -> currentFlashingStatus.value != FlashingStatus.FLASHING
+        }
+
+        if (canGoBack) {
+            if (isExternalInstall) {
+                (context as? ComponentActivity)?.finish()
             } else {
-                viewModel.markNeedRefresh()
-                viewModel.fetchModuleList()
-                navigator.navigate(ModuleScreenDestination) {
+                if (flashIt is FlashIt.FlashModules || flashIt is FlashIt.FlashModuleUpdate) {
+                    viewModel.markNeedRefresh()
+                    viewModel.fetchModuleList()
+                    navigator.navigate(ModuleScreenDestination)
+                } else {
+                    viewModel.markNeedRefresh()
+                    viewModel.fetchModuleList()
+                    navigator.popBackStack()
                 }
             }
         }
@@ -217,8 +410,6 @@ fun FlashScreen(navigator: DestinationsNavigator, flashIt: FlashIt) {
             TopBar(
                 currentFlashingStatus.value,
                 currentStatus,
-                navigator = navigator,
-                flashIt = flashIt,
                 onBack = onBack,
                 onSave = {
                     scope.launch {
@@ -347,7 +538,7 @@ fun ModuleInstallProgressBar(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = if (currentModuleName.isNotEmpty()) currentModuleName else stringResource(R.string.module),
+                    text = currentModuleName.ifEmpty { stringResource(R.string.module) },
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -429,13 +620,16 @@ fun ModuleInstallProgressBar(
 private fun TopBar(
     status: FlashingStatus,
     moduleStatus: ModuleInstallStatus = ModuleInstallStatus(),
-    navigator: DestinationsNavigator,
-    flashIt: FlashIt,
     onBack: () -> Unit,
     onSave: () -> Unit = {},
     scrollBehavior: TopAppBarScrollBehavior? = null
 ) {
-    val cardColor = MaterialTheme.colorScheme.surfaceContainerLow
+    val colorScheme = MaterialTheme.colorScheme
+    val cardColor = if (CardConfig.isCustomBackgroundEnabled) {
+        colorScheme.surfaceContainerLow
+    } else {
+        colorScheme.background
+    }
     val cardAlpha = CardConfig.cardAlpha
 
     val statusColor = when(status) {
@@ -495,7 +689,7 @@ private fun TopBar(
     )
 }
 
-suspend fun getModuleNameFromUri(context: android.content.Context, uri: Uri): String {
+suspend fun getModuleNameFromUri(context: Context, uri: Uri): String {
     return withContext(Dispatchers.IO) {
         try {
             if (uri == Uri.EMPTY) {
@@ -516,12 +710,22 @@ sealed class FlashIt : Parcelable {
     data class FlashBoot(val boot: Uri? = null, val lkm: LkmSelection, val ota: Boolean) : FlashIt()
     data class FlashModule(val uri: Uri) : FlashIt()
     data class FlashModules(val uris: List<Uri>, val currentIndex: Int = 0) : FlashIt()
+    data class FlashModuleUpdate(val uri: Uri) : FlashIt() // 模块更新
     data object FlashRestore : FlashIt()
     data object FlashUninstall : FlashIt()
 }
 
+// 模块更新刷写
+fun flashModuleUpdate(
+    uri: Uri,
+    onFinish: (Boolean, Int) -> Unit,
+    onStdout: (String) -> Unit,
+    onStderr: (String) -> Unit
+) {
+    flashModule(uri, onFinish, onStdout, onStderr)
+}
+
 fun flashIt(
-    context: android.content.Context,
     flashIt: FlashIt,
     onFinish: (Boolean, Int) -> Unit,
     onStdout: (String) -> Unit,
@@ -547,6 +751,9 @@ fun flashIt(
             onStdout("\n")
 
             flashModule(currentUri, onFinish, onStdout, onStderr)
+        }
+        is FlashIt.FlashModuleUpdate -> {
+            onFinish(false, 0)
         }
         FlashIt.FlashRestore -> restoreBoot(onFinish, onStdout, onStderr)
         FlashIt.FlashUninstall -> uninstallPermanently(onFinish, onStdout, onStderr)

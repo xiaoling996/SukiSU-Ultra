@@ -7,8 +7,9 @@ use android_logger::Config;
 #[cfg(target_os = "android")]
 use log::LevelFilter;
 
-use crate::defs::KSUD_VERBOSE_LOG_FILE;
-use crate::{apk_sign, assets, debug, defs, init_event, ksucalls, module, utils};
+use crate::{
+    apk_sign, assets, debug, defs, defs::KSUD_VERBOSE_LOG_FILE, init_event, ksucalls, module, utils,
+};
 
 /// KernelSU userspace cli
 #[derive(Parser, Debug)]
@@ -61,6 +62,12 @@ enum Commands {
     Profile {
         #[command(subcommand)]
         command: Profile,
+    },
+
+    /// Manage kernel features
+    Feature {
+        #[command(subcommand)]
+        command: Feature,
     },
 
     /// Patch boot or init_boot images to apply KernelSU
@@ -122,6 +129,14 @@ enum Commands {
         #[command(subcommand)]
         command: BootInfo,
     },
+
+    /// KPM module manager
+    #[cfg(target_arch = "aarch64")]
+    Kpm {
+        #[command(subcommand)]
+        command: kpm_cmd::Kpm,
+    },
+
     /// For developers
     Debug {
         #[command(subcommand)]
@@ -272,6 +287,62 @@ enum Profile {
     ListTemplates,
 }
 
+#[derive(clap::Subcommand, Debug)]
+enum Feature {
+    /// Get feature value and support status
+    Get {
+        /// Feature ID or name (su_compat, kernel_umount)
+        id: String,
+    },
+
+    /// Set feature value
+    Set {
+        /// Feature ID or name
+        id: String,
+        /// Feature value (0=disable, 1=enable)
+        value: u64,
+    },
+
+    /// List all available features
+    List,
+
+    /// Check feature status (supported/unsupported/managed)
+    Check {
+        /// Feature ID or name (su_compat, kernel_umount)
+        id: String,
+    },
+
+    /// Load configuration from file and apply to kernel
+    Load,
+
+    /// Save current kernel feature states to file
+    Save,
+}
+
+#[cfg(target_arch = "aarch64")]
+mod kpm_cmd {
+    use clap::Subcommand;
+    use std::path::PathBuf;
+
+    #[derive(Subcommand, Debug)]
+    pub enum Kpm {
+        /// Load a KPM module: load <path> [args]
+        Load { path: PathBuf, args: Option<String> },
+        /// Unload a KPM module: unload <name>
+        Unload { name: String },
+        /// Get number of loaded modules
+        Num,
+        /// List loaded KPM modules
+        List,
+        /// Get info of a KPM module: info <name>
+        Info { name: String },
+        /// Send control command to a KPM module: control <name> <args>
+        Control { name: String, args: String },
+        /// Print KPM Loader version
+        Version,
+    }
+}
+
 pub fn run() -> Result<()> {
     #[cfg(target_os = "android")]
     android_logger::init_once(
@@ -335,6 +406,15 @@ pub fn run() -> Result<()> {
             Profile::ListTemplates => crate::profile::list_templates(),
         },
 
+        Commands::Feature { command } => match command {
+            Feature::Get { id } => crate::feature::get_feature(id),
+            Feature::Set { id, value } => crate::feature::set_feature(id, value),
+            Feature::List => crate::feature::list_features(),
+            Feature::Check { id } => crate::feature::check_feature(id),
+            Feature::Load => crate::feature::load_config_and_apply(),
+            Feature::Save => crate::feature::save_config(),
+        },
+
         Commands::Debug { command } => match command {
             Debug::SetManager { apk } => debug::set_manager(&apk),
             Debug::GetSign { apk } => {
@@ -366,13 +446,13 @@ pub fn run() -> Result<()> {
         Commands::BootInfo { command } => match command {
             BootInfo::CurrentKmi => {
                 let kmi = crate::boot_patch::get_current_kmi()?;
-                println!("{}", kmi);
+                println!("{kmi}");
                 // return here to avoid printing the error message
                 return Ok(());
             }
             BootInfo::SupportedKmi => {
                 let kmi = crate::assets::list_supported_kmi()?;
-                kmi.iter().for_each(|kmi| println!("{}", kmi));
+                kmi.iter().for_each(|kmi| println!("{kmi}"));
                 return Ok(());
             }
         },
@@ -381,10 +461,29 @@ pub fn run() -> Result<()> {
             magiskboot,
             flash,
         } => crate::boot_patch::restore(boot, magiskboot, flash),
+        #[cfg(target_arch = "aarch64")]
+        Commands::Kpm { command } => {
+            use crate::cli::kpm_cmd::Kpm;
+            match command {
+                Kpm::Load { path, args } => {
+                    crate::kpm::kpm_load(path.to_str().unwrap(), args.as_deref())
+                }
+                Kpm::Unload { name } => crate::kpm::kpm_unload(&name),
+                Kpm::Num => crate::kpm::kpm_num().map(|_| ()),
+                Kpm::List => crate::kpm::kpm_list(),
+                Kpm::Info { name } => crate::kpm::kpm_info(&name),
+                Kpm::Control { name, args } => {
+                    let ret = crate::kpm::kpm_control(&name, &args)?;
+                    println!("{}", ret);
+                    Ok(())
+                }
+                Kpm::Version => crate::kpm::kpm_version_loader(),
+            }
+        }
     };
 
     if let Err(e) = &result {
-        log::error!("Error: {:?}", e);
+        log::error!("Error: {e:?}");
     }
     result
 }

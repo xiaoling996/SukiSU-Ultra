@@ -8,11 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.lifecycle.lifecycleScope
 import com.dergoogler.mmrl.platform.Platform
 import com.dergoogler.mmrl.platform.model.ModId
@@ -20,6 +16,7 @@ import com.dergoogler.mmrl.ui.component.Loading
 import com.dergoogler.mmrl.webui.screen.WebUIScreen
 import com.dergoogler.mmrl.webui.util.rememberWebUIOptions
 import com.sukisu.ultra.BuildConfig
+import com.sukisu.ultra.ui.theme.KernelSUTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -41,7 +38,7 @@ class WebUIXActivity : ComponentActivity() {
             val osVersion = Build.VERSION.RELEASE
             val deviceModel = Build.MODEL
 
-            return "SukiSU /$ksuVersion (Linux; Android $osVersion; $deviceModel; $platform/$platformVersion)"
+            return "SukiSU-Ultra /$ksuVersion (Linux; Android $osVersion; $deviceModel; $platform/$platformVersion)"
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,17 +55,17 @@ class WebUIXActivity : ComponentActivity() {
         val name = intent.getStringExtra("name")!!
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             @Suppress("DEPRECATION")
-            setTaskDescription(ActivityManager.TaskDescription("KernelSU - $name"))
+            setTaskDescription(ActivityManager.TaskDescription("SukiSU-Ultra - $name"))
         } else {
             val taskDescription =
-                ActivityManager.TaskDescription.Builder().setLabel("KernelSU - $name").build()
+                ActivityManager.TaskDescription.Builder().setLabel("SukiSU-Ultra - $name").build()
             setTaskDescription(taskDescription)
         }
 
         val prefs = getSharedPreferences("settings", MODE_PRIVATE)
 
         setContent {
-            WebUIXTheme {
+            KernelSUTheme {
                 var isLoading by remember { mutableStateOf(true) }
 
                 LaunchedEffect(Platform.isAlive) {
@@ -81,7 +78,7 @@ class WebUIXActivity : ComponentActivity() {
 
                 if (isLoading) {
                     Loading()
-                    return@WebUIXTheme
+                    return@KernelSUTheme
                 }
 
                 val webDebugging = prefs.getBoolean("enable_web_debugging", false)

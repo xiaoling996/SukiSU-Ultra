@@ -1,16 +1,30 @@
-use crate::defs::{KSU_MOUNT_SOURCE, NO_MOUNT_PATH, NO_TMPFS_PATH};
-use crate::module::{handle_updated_modules, prune_modules};
-use crate::{assets, defs, ksucalls, restorecon, utils};
+#[cfg(target_arch = "aarch64")]
+use crate::kpm;
+use crate::{
+    assets, defs,
+    defs::{FORCE_SAFE_MODE_FLAG, KSU_MOUNT_SOURCE, NO_MOUNT_PATH, NO_TMPFS_PATH},
+    ksucalls,
+    module::{handle_updated_modules, prune_modules},
+    restorecon, uid_scanner, utils,
+    utils::find_tmp_path,
+};
 use anyhow::{Context, Result};
 use log::{info, warn};
-use rustix::fs::{MountFlags, mount};
+use rustix::fs::{mount, MountFlags};
 use std::path::Path;
-use crate::kpm;
+
+#[cfg(target_os = "android")]
+pub fn mount_modules_systemlessly() -> Result<()> {
+    crate::magic_mount::magic_mount(&find_tmp_path())
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn mount_modules_systemlessly() -> Result<()> {
+    Ok(())
+}
 
 pub fn on_post_data_fs() -> Result<()> {
     ksucalls::report_post_fs_data();
-
-    kpm::start_kpm_watcher()?;
 
     utils::umask(0);
 
@@ -24,6 +38,17 @@ pub fn on_post_data_fs() -> Result<()> {
         return Ok(());
     }
 
+    let version = ksucalls::get_version();
+    if version == 0 || version < 13490 {
+        log::warn!(
+            "KernelSU version too old ({version}), forcing safe mode! Please bump the kernel version!"
+        );
+        std::fs::write(FORCE_SAFE_MODE_FLAG, "1").ok();
+        return Ok(());
+    } else {
+        std::fs::remove_file(FORCE_SAFE_MODE_FLAG).ok();
+    }
+
     let safe_mode = utils::is_safe_mode();
 
     if safe_mode {
@@ -31,11 +56,14 @@ pub fn on_post_data_fs() -> Result<()> {
     } else {
         // Then exec common post-fs-data scripts
         if let Err(e) = crate::module::exec_common_scripts("post-fs-data.d", true) {
-            warn!("exec common post-fs-data scripts failed: {}", e);
+            warn!("exec common post-fs-data scripts failed: {e}");
         }
     }
 
     assets::ensure_binaries(true).with_context(|| "Failed to extract bin assets")?;
+
+    // Start UID scanner daemon with highest priority
+    uid_scanner::start_uid_scanner_daemon()?;
 
     // tell kernel that we've mount the module, so that it can do some optimization
     ksucalls::report_module_mounted();
@@ -44,21 +72,21 @@ pub fn on_post_data_fs() -> Result<()> {
     if safe_mode {
         warn!("safe mode, skip post-fs-data scripts and disable all modules!");
         if let Err(e) = crate::module::disable_all_modules() {
-            warn!("disable all modules failed: {}", e);
+            warn!("disable all modules failed: {e}");
         }
         return Ok(());
     }
 
     if let Err(e) = prune_modules() {
-        warn!("prune modules failed: {}", e);
+        warn!("prune modules failed: {e}");
     }
 
     if let Err(e) = handle_updated_modules() {
-        warn!("handle updated modules failed: {}", e);
+        warn!("handle updated modules failed: {e}");
     }
 
     if let Err(e) = restorecon::restorecon() {
-        warn!("restorecon failed: {}", e);
+        warn!("restorecon failed: {e}");
     }
 
     // load sepolicy.rule
@@ -67,13 +95,38 @@ pub fn on_post_data_fs() -> Result<()> {
     }
 
     if let Err(e) = crate::profile::apply_sepolies() {
-        warn!("apply root profile sepolicy failed: {}", e);
+        warn!("apply root profile sepolicy failed: {e}");
     }
 
+    // load feature config
+    if let Err(e) = crate::feature::init_features() {
+        warn!("init features failed: {e}");
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    if let Err(e) = kpm::start_kpm_watcher() {
+        warn!("KPM: Failed to start KPM watcher: {e}");
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    if let Err(e) = kpm::load_kpm_modules() {
+        warn!("KPM: Failed to load KPM modules: {e}");
+    }
+
+    let tmpfs_path = find_tmp_path();
+    // for compatibility
+    let no_mount = Path::new(NO_TMPFS_PATH).exists() || Path::new(NO_MOUNT_PATH).exists();
+
     // mount temp dir
-    if !Path::new(NO_TMPFS_PATH).exists() {
-        if let Err(e) = mount(KSU_MOUNT_SOURCE, utils::get_tmp_path(), "tmpfs", MountFlags::empty(), "") {
-            warn!("do temp dir mount failed: {}", e);
+    if !no_mount {
+        if let Err(e) = mount(
+            KSU_MOUNT_SOURCE,
+            &tmpfs_path,
+            "tmpfs",
+            MountFlags::empty(),
+            "",
+        ) {
+            warn!("do temp dir mount failed: {e}");
         }
     } else {
         info!("no tmpfs requested");
@@ -82,18 +135,19 @@ pub fn on_post_data_fs() -> Result<()> {
     // exec modules post-fs-data scripts
     // TODO: Add timeout
     if let Err(e) = crate::module::exec_stage_script("post-fs-data", true) {
-        warn!("exec post-fs-data scripts failed: {}", e);
+        warn!("exec post-fs-data scripts failed: {e}");
     }
 
     // load system.prop
     if let Err(e) = crate::module::load_system_prop() {
-        warn!("load system.prop failed: {}", e);
+        warn!("load system.prop failed: {e}");
     }
 
     // mount module systemlessly by magic mount
-    if !Path::new(NO_MOUNT_PATH).exists() {
-        if let Err(e) = mount_modules_systemlessly() {
-            warn!("do systemless mount failed: {}", e);
+    #[cfg(target_os = "android")]
+    if !no_mount {
+        if let Err(e) = crate::magic_mount::magic_mount(&tmpfs_path) {
+            warn!("do systemless mount failed: {e}");
         }
     } else {
         info!("no mount requested");
@@ -101,19 +155,6 @@ pub fn on_post_data_fs() -> Result<()> {
 
     run_stage("post-mount", true);
 
-    // load kpm modules
-    kpm::load_kpm_modules()?;
-
-    Ok(())
-}
-
-#[cfg(target_os = "android")]
-pub fn mount_modules_systemlessly() -> Result<()> {
-    crate::magic_mount::magic_mount()
-}
-
-#[cfg(not(target_os = "android"))]
-pub fn mount_modules_systemlessly() -> Result<()> {
     Ok(())
 }
 
@@ -186,7 +227,7 @@ fn catch_bootlog(logname: &str, command: Vec<&str>) -> Result<()> {
     };
 
     if let Err(e) = result {
-        warn!("Failed to start logcat: {:#}", e);
+        warn!("Failed to start logcat: {e:#}");
     }
 
     Ok(())

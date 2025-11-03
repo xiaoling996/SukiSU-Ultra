@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -15,7 +16,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -23,7 +23,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
-import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.sukisu.ultra.ui.component.*
@@ -33,12 +32,10 @@ import com.sukisu.ultra.ui.util.*
 import java.io.File
 import androidx.core.content.edit
 import com.sukisu.ultra.R
-import java.io.BufferedReader
 import java.io.FileInputStream
-import java.io.InputStreamReader
 import java.net.*
 import android.app.Activity
-import com.sukisu.ultra.ui.theme.CardConfig.cardElevation
+import androidx.compose.ui.res.painterResource
 
 /**
  * KPM 管理界面
@@ -49,13 +46,15 @@ import com.sukisu.ultra.ui.theme.CardConfig.cardElevation
 @Destination<RootGraph>
 @Composable
 fun KpmScreen(
-    navigator: DestinationsNavigator,
     viewModel: KpmViewModel = viewModel()
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackBarHost = remember { SnackbarHostState() }
     val confirmDialog = rememberConfirmDialog()
+
+    val listState = rememberLazyListState()
+    val fabVisible by rememberFabVisibilityState(listState)
 
     val moduleConfirmContentMap = viewModel.moduleList.associate { module ->
         val moduleFileName = module.id
@@ -84,18 +83,17 @@ fun KpmScreen(
         LaunchedEffect(tempFileForInstall) {
             tempFileForInstall?.let { tempFile ->
                 try {
-                    val command = arrayOf("su", "-c", "strings ${tempFile.absolutePath} | grep 'name='")
-                    val process = Runtime.getRuntime().exec(command)
-                    val inputStream = process.inputStream
-                    val reader = BufferedReader(InputStreamReader(inputStream))
-                    var line: String?
-                    while (reader.readLine().also { line = it } != null) {
-                        if (line!!.startsWith("name=")) {
-                            moduleName = line.substringAfter("name=").trim()
-                            break
+                    val shell = getRootShell()
+                    val command = "strings ${tempFile.absolutePath} | grep 'name='"
+                    val result = shell.newJob().add(command).to(ArrayList(), null).exec()
+                    if (result.isSuccess) {
+                        for (line in result.out) {
+                            if (line.startsWith("name=")) {
+                                moduleName = line.substringAfter("name=").trim()
+                                break
+                            }
                         }
                     }
-                    process.waitFor()
                 } catch (e: Exception) {
                     Log.e("KsuCli", "Failed to get module name: ${e.message}", e)
                 }
@@ -112,7 +110,6 @@ fun KpmScreen(
                 Text(
                     text = kpmInstallMode,
                     style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onSurface
                 )
             },
             text = {
@@ -121,7 +118,6 @@ fun KpmScreen(
                         Text(
                             text = stringResource(R.string.kpm_install_mode_description, it),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Spacer(modifier = Modifier.height(16.dp))
@@ -146,9 +142,6 @@ fun KpmScreen(
                                 }
                             },
                             modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary
-                            )
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.Download,
@@ -176,9 +169,6 @@ fun KpmScreen(
                                 }
                             },
                             modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.secondary
-                            )
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.Inventory,
@@ -209,7 +199,6 @@ fun KpmScreen(
                     }
                 }
             },
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             shape = MaterialTheme.shapes.extraLarge
         )
     }
@@ -292,38 +281,34 @@ fun KpmScreen(
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = {
-                    selectPatchLauncher.launch(
-                        Intent(Intent.ACTION_GET_CONTENT).apply {
-                            type = "application/octet-stream"
-                        }
-                    )
-                },
-                icon = {
-                    Icon(
-                        imageVector = Icons.Filled.Add,
-                        contentDescription = stringResource(R.string.kpm_install),
-                    )
-                },
-                text = {
-                    Text(
-                        text = stringResource(R.string.kpm_install),
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                },
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                expanded = true,
-            )
+            AnimatedFab(visible = fabVisible) {
+                FloatingActionButton(
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    onClick = {
+                        selectPatchLauncher.launch(
+                            Intent(Intent.ACTION_GET_CONTENT).apply {
+                                type = "application/octet-stream"
+                            }
+                        )
+                    },
+                    content = {
+                        Icon(
+                            painter = painterResource(id = R.drawable.package_import),
+                            contentDescription = null
+                        )
+                    }
+                )
+            }
         },
+        contentWindowInsets = WindowInsets.safeDrawing.only(
+            WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+        ),
         snackbarHost = { SnackbarHost(snackBarHost) }
     ) { padding ->
         Column(modifier = Modifier.padding(padding)) {
             if (!isNoticeClosed) {
                 Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp)
@@ -348,7 +333,6 @@ fun KpmScreen(
                             text = stringResource(R.string.kernel_module_notice),
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
                         )
 
                         IconButton(
@@ -357,9 +341,6 @@ fun KpmScreen(
                                 sharedPreferences.edit { putBoolean("is_notice_closed", true) }
                             },
                             modifier = Modifier.size(24.dp),
-                            colors = IconButtonDefaults.iconButtonColors(
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.Close,
@@ -391,12 +372,12 @@ fun KpmScreen(
                             stringResource(R.string.kpm_empty),
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -443,18 +424,17 @@ private suspend fun handleModuleInstall(
 ) {
     var moduleId: String? = null
     try {
-        val command = arrayOf("su", "-c", "strings ${tempFile.absolutePath} | grep 'name='")
-        val process = Runtime.getRuntime().exec(command)
-        val inputStream = process.inputStream
-        val reader = BufferedReader(InputStreamReader(inputStream))
-        var line: String?
-        while (reader.readLine().also { line = it } != null) {
-            if (line!!.startsWith("name=")) {
-                moduleId = line.substringAfter("name=").trim()
-                break
+        val shell = getRootShell()
+        val command = "strings ${tempFile.absolutePath} | grep 'name='"
+        val result = shell.newJob().add(command).to(ArrayList(), null).exec()
+        if (result.isSuccess) {
+            for (line in result.out) {
+                if (line.startsWith("name=")) {
+                    moduleId = line.substringAfter("name=").trim()
+                    break
+                }
             }
         }
-        process.waitFor()
     } catch (e: Exception) {
         Log.e("KsuCli", "Failed to get module ID from strings command: ${e.message}", e)
     }
@@ -473,8 +453,9 @@ private suspend fun handleModuleInstall(
 
     try {
         if (isEmbed) {
-            Runtime.getRuntime().exec(arrayOf("su", "-c", "mkdir -p /data/adb/kpm")).waitFor()
-            Runtime.getRuntime().exec(arrayOf("su", "-c", "cp ${tempFile.absolutePath} $targetPath")).waitFor()
+            val shell = getRootShell()
+            shell.newJob().add("mkdir -p /data/adb/kpm").exec()
+            shell.newJob().add("cp ${tempFile.absolutePath} $targetPath").exec()
         }
 
         val loadResult = loadKpmModule(tempFile.absolutePath)
@@ -518,8 +499,9 @@ private suspend fun handleModuleUninstall(
     val moduleFilePath = "/data/adb/kpm/$moduleFileName"
 
     val fileExists = try {
-        val result = Runtime.getRuntime().exec(arrayOf("su", "-c", "ls /data/adb/kpm/$moduleFileName")).waitFor() == 0
-        result
+        val shell = getRootShell()
+        val result = shell.newJob().add("ls /data/adb/kpm/$moduleFileName").exec()
+        result.isSuccess
     } catch (e: Exception) {
         Log.e("KsuCli", "Failed to check module file existence: ${e.message}", e)
         snackBarHost.showSnackbar(
@@ -528,6 +510,7 @@ private suspend fun handleModuleUninstall(
         )
         false
     }
+    
     val confirmResult = confirmDialog.awaitConfirm(
         title = confirmTitle,
         content = confirmContent,
@@ -548,7 +531,8 @@ private suspend fun handleModuleUninstall(
             }
 
             if (fileExists) {
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "rm $moduleFilePath")).waitFor()
+                val shell = getRootShell()
+                shell.newJob().add("rm $moduleFilePath").exec()
             }
 
             viewModel.fetchModuleList()
@@ -585,7 +569,6 @@ private fun KpmModuleItem(
                 Text(
                     text = stringResource(R.string.kpm_control),
                     style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onSurface
                 )
             },
             text = {
@@ -595,20 +578,14 @@ private fun KpmModuleItem(
                     label = {
                         Text(
                             text = stringResource(R.string.kpm_args),
-                            color = MaterialTheme.colorScheme.primary
                         )
                     },
                     placeholder = {
                         Text(
                             text = module.args,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                         )
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                    )
                 )
             },
             confirmButton = {
@@ -627,7 +604,6 @@ private fun KpmModuleItem(
                 ) {
                     Text(
                         text = stringResource(R.string.confirm),
-                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             },
@@ -635,26 +611,16 @@ private fun KpmModuleItem(
                 TextButton(onClick = { viewModel.hideInputDialog() }) {
                     Text(
                         text = stringResource(R.string.cancel),
-                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             },
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             shape = MaterialTheme.shapes.extraLarge
         )
     }
 
     Card(
         colors = getCardColors(MaterialTheme.colorScheme.surfaceContainerHigh),
-        elevation = CardDefaults.cardElevation(defaultElevation = cardElevation),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(MaterialTheme.shapes.large)
-            .shadow(
-                elevation = cardElevation,
-                shape = MaterialTheme.shapes.large,
-                spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
-            )
+        elevation = getCardElevation()
     ) {
         Column(
             modifier = Modifier.padding(20.dp)
@@ -668,7 +634,6 @@ private fun KpmModuleItem(
                     Text(
                         text = module.name,
                         style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onSurface
                     )
 
                     Spacer(modifier = Modifier.height(4.dp))
@@ -676,19 +641,16 @@ private fun KpmModuleItem(
                     Text(
                         text = "${stringResource(R.string.kpm_version)}: ${module.version}",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     Text(
                         text = "${stringResource(R.string.kpm_author)}: ${module.author}",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     Text(
                         text = "${stringResource(R.string.kpm_args)}: ${module.args}",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -698,7 +660,6 @@ private fun KpmModuleItem(
             Text(
                 text = module.description,
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(modifier = Modifier.height(20.dp))
@@ -711,10 +672,6 @@ private fun KpmModuleItem(
                     onClick = { viewModel.showInputDialog(module.id) },
                     enabled = module.hasAction,
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Settings,
@@ -746,29 +703,31 @@ private fun KpmModuleItem(
 }
 
 private fun checkStringsCommand(tempFile: File): Int {
-    val command = arrayOf("su", "-c", "strings ${tempFile.absolutePath} | grep -E 'name=|version=|license=|author='")
-    val process = Runtime.getRuntime().exec(command)
-    val inputStream = process.inputStream
-    val reader = BufferedReader(InputStreamReader(inputStream))
-    var line: String?
+    val shell = getRootShell()
+    val command = "strings ${tempFile.absolutePath} | grep -E 'name=|version=|license=|author='"
+    val result = shell.newJob().add(command).to(ArrayList(), null).exec()
+    
+    if (!result.isSuccess) {
+        return 0
+    }
+    
     var matchCount = 0
     val keywords = listOf("name=", "version=", "license=", "author=")
     var nameExists = false
-
-    while (reader.readLine().also { line = it } != null) {
-        if (!nameExists && line!!.startsWith("name=")) {
+    
+    for (line in result.out) {
+        if (!nameExists && line.startsWith("name=")) {
             nameExists = true
             matchCount++
         } else if (nameExists) {
             for (keyword in keywords) {
-                if (line!!.startsWith(keyword)) {
+                if (line.startsWith(keyword)) {
                     matchCount++
                     break
                 }
             }
         }
     }
-    process.waitFor()
 
     return if (nameExists) matchCount else 0
 }

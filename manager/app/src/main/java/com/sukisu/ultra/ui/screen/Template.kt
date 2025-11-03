@@ -4,16 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.widget.Toast
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.ExperimentalMaterialApi
@@ -22,29 +13,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ImportExport
 import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarColors
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.TopAppBarScrollBehavior
+import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.rememberTopAppBarState
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
@@ -59,11 +30,11 @@ import com.ramcosta.composedestinations.generated.destinations.TemplateEditorScr
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import com.ramcosta.composedestinations.result.ResultRecipient
 import com.ramcosta.composedestinations.result.getOr
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import com.sukisu.ultra.R
 import com.sukisu.ultra.ui.theme.CardConfig
 import com.sukisu.ultra.ui.viewmodel.TemplateViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * @author weishu
@@ -94,9 +65,6 @@ fun AppProfileTemplateScreen(
         }
     }
 
-    val cardColorUse = MaterialTheme.colorScheme.surfaceVariant
-    val cardAlpha = CardConfig.cardAlpha
-
     Scaffold(
         topBar = {
             val context = LocalContext.current
@@ -108,10 +76,6 @@ fun AppProfileTemplateScreen(
             }
             TopBar(
                 onBack = dropUnlessResumed { navigator.popBackStack() },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = cardColorUse.copy(alpha = cardAlpha),
-                    scrolledContainerColor = cardColorUse.copy(alpha = cardAlpha)
-                ),
                 onSync = {
                     scope.launch { viewModel.fetchTemplates(true) }
                 },
@@ -207,13 +171,13 @@ private fun TemplateItem(
                 )
                 Text(template.description)
                 FlowRow {
-                    LabelText(label = "UID: ${template.uid}", backgroundColor = MaterialTheme.colorScheme.surface)
-                    LabelText(label = "GID: ${template.gid}", backgroundColor = MaterialTheme.colorScheme.surface)
-                    LabelText(label = template.context, backgroundColor = MaterialTheme.colorScheme.surface)
+                    LabelText(label = "UID: ${template.uid}")
+                    LabelText(label = "GID: ${template.gid}")
+                    LabelText(label = template.context)
                     if (template.local) {
-                        LabelText(label = "local", backgroundColor = MaterialTheme.colorScheme.surface)
+                        LabelText(label = "local")
                     } else {
-                        LabelText(label = "remote", backgroundColor = MaterialTheme.colorScheme.surface)
+                        LabelText(label = "remote")
                     }
                 }
             }
@@ -228,10 +192,14 @@ private fun TopBar(
     onSync: () -> Unit = {},
     onImport: () -> Unit = {},
     onExport: () -> Unit = {},
-    colors: TopAppBarColors,
     scrollBehavior: TopAppBarScrollBehavior? = null
 ) {
-    val cardColor = MaterialTheme.colorScheme.surfaceContainerLow
+    val colorScheme = MaterialTheme.colorScheme
+    val cardColor = if (CardConfig.isCustomBackgroundEnabled) {
+        colorScheme.surfaceContainerLow
+    } else {
+        colorScheme.background
+    }
     val cardAlpha = CardConfig.cardAlpha
 
     TopAppBar(

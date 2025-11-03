@@ -2,26 +2,9 @@ package com.sukisu.ultra.ui.screen
 
 import android.annotation.SuppressLint
 import androidx.annotation.StringRes
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.*
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -29,37 +12,15 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarColors
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.TopAppBarScrollBehavior
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -84,12 +45,9 @@ import com.sukisu.ultra.ui.component.profile.AppProfileConfig
 import com.sukisu.ultra.ui.component.profile.RootProfileConfig
 import com.sukisu.ultra.ui.component.profile.TemplateConfig
 import com.sukisu.ultra.ui.theme.CardConfig
-import com.sukisu.ultra.ui.util.LocalSnackbarHost
-import com.sukisu.ultra.ui.util.forceStopApp
-import com.sukisu.ultra.ui.util.getSepolicy
-import com.sukisu.ultra.ui.util.launchApp
-import com.sukisu.ultra.ui.util.restartApp
-import com.sukisu.ultra.ui.util.setSepolicy
+import com.sukisu.ultra.ui.theme.getCardColors
+import com.sukisu.ultra.ui.theme.getCardElevation
+import com.sukisu.ultra.ui.util.*
 import com.sukisu.ultra.ui.viewmodel.SuperUserViewModel
 import com.sukisu.ultra.ui.viewmodel.getTemplateInfoById
 import kotlinx.coroutines.launch
@@ -122,7 +80,12 @@ fun AppProfileScreen(
         mutableStateOf(initialProfile)
     }
 
-    val cardColor = MaterialTheme.colorScheme.surfaceContainerLow
+    val colorScheme = MaterialTheme.colorScheme
+    val cardColor = if (CardConfig.isCustomBackgroundEnabled) {
+        colorScheme.surfaceContainerLow
+    } else {
+        colorScheme.background
+    }
     val cardAlpha = CardConfig.cardAlpha
 
     Scaffold(
@@ -203,149 +166,173 @@ private fun AppProfileInner(
     onProfileChange: (Natives.Profile) -> Unit,
 ) {
     val isRootGranted = profile.allowSu
+    val cardColors = getCardColors(MaterialTheme.colorScheme.surfaceContainerHigh)
 
-    Column(modifier = modifier) {
-        ElevatedCard(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            shape = MaterialTheme.shapes.medium
-        ) {
-            AppMenuBox(packageName) {
-                ListItem(
-                    headlineContent = {
-                        Text(
-                            text = appLabel,
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                    },
-                    supportingContent = {
-                        Text(
-                            text = packageName,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    },
-                    leadingContent = appIcon,
+    MaterialTheme(
+        colorScheme = MaterialTheme.colorScheme.copy(
+            surface = if (CardConfig.isCustomBackgroundEnabled) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHigh
+        )
+    ) {
+        Column(modifier = modifier) {
+            ElevatedCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                shape = MaterialTheme.shapes.medium,
+                colors = cardColors,
+                elevation = getCardElevation(),
+            ) {
+                AppMenuBox(packageName) {
+                    ListItem(
+                        headlineContent = {
+                            Text(
+                                text = appLabel,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        },
+                        supportingContent = {
+                            Text(
+                                text = packageName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        leadingContent = appIcon,
+                    )
+                }
+            }
+
+            ElevatedCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                shape = MaterialTheme.shapes.medium,
+                colors = cardColors,
+                elevation = getCardElevation(),
+            ) {
+                SwitchItem(
+                    icon = Icons.Filled.Security,
+                    title = stringResource(id = R.string.superuser),
+                    checked = isRootGranted,
+                    onCheckedChange = { onProfileChange(profile.copy(allowSu = it)) },
                 )
             }
-        }
 
-        ElevatedCard(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            shape = MaterialTheme.shapes.medium
-        ) {
-            SwitchItem(
-                icon = Icons.Filled.Security,
-                title = stringResource(id = R.string.superuser),
-                checked = isRootGranted,
-                onCheckedChange = { onProfileChange(profile.copy(allowSu = it)) },
-            )
-        }
-
-        Crossfade(
-            targetState = isRootGranted,
-            label = "RootAccess"
-        ) { current ->
-            Column(
-                modifier = Modifier.padding(bottom = 6.dp + 48.dp + 6.dp /* SnackBar height */)
-            ) {
-                if (current) {
-                    val initialMode = if (profile.rootUseDefault) {
-                        Mode.Default
-                    } else if (profile.rootTemplate != null) {
-                        Mode.Template
-                    } else {
-                        Mode.Custom
-                    }
-                    var mode by rememberSaveable {
-                        mutableStateOf(initialMode)
-                    }
-
-                    ElevatedCard(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        shape = MaterialTheme.shapes.medium
-                    ) {
-                        ProfileBox(mode, true) {
-                            // template mode shouldn't change profile here!
-                            if (it == Mode.Default || it == Mode.Custom) {
-                                onProfileChange(profile.copy(rootUseDefault = it == Mode.Default))
-                            }
-                            mode = it
+            Crossfade(
+                targetState = isRootGranted,
+                label = "RootAccess"
+            ) { current ->
+                Column(
+                    modifier = Modifier.padding(bottom = 6.dp + 48.dp + 6.dp /* SnackBar height */)
+                ) {
+                    if (current) {
+                        val initialMode = if (profile.rootUseDefault) {
+                            Mode.Default
+                        } else if (profile.rootTemplate != null) {
+                            Mode.Template
+                        } else {
+                            Mode.Custom
                         }
-                    }
+                        var mode by rememberSaveable {
+                            mutableStateOf(initialMode)
+                        }
 
-                    AnimatedVisibility(
-                        visible = mode != Mode.Default,
-                        enter = fadeIn() + expandVertically(),
-                        exit = fadeOut() + shrinkVertically()
-                    ) {
                         ElevatedCard(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 8.dp),
-                            shape = MaterialTheme.shapes.medium
+                            shape = MaterialTheme.shapes.medium,
+                            colors = cardColors,
+                            elevation = getCardElevation(),
                         ) {
-                            Column(modifier = Modifier.padding(vertical = 8.dp)) {
-                                Crossfade(targetState = mode, label = "ProfileMode") { currentMode ->
-                                    when (currentMode) {
-                                        Mode.Template -> {
-                                            TemplateConfig(
-                                                profile = profile,
-                                                onViewTemplate = onViewTemplate,
-                                                onManageTemplate = onManageTemplate,
-                                                onProfileChange = onProfileChange
-                                            )
+                            ProfileBox(mode, true) {
+                                // template mode shouldn't change profile here!
+                                if (it == Mode.Default || it == Mode.Custom) {
+                                    onProfileChange(profile.copy(rootUseDefault = it == Mode.Default))
+                                }
+                                mode = it
+                            }
+                        }
+
+                        AnimatedVisibility(
+                            visible = mode != Mode.Default,
+                            enter = fadeIn() + expandVertically(),
+                            exit = fadeOut() + shrinkVertically()
+                        ) {
+                            ElevatedCard(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                shape = MaterialTheme.shapes.medium,
+                                colors = cardColors,
+                                elevation = getCardElevation(),
+                            ) {
+                                Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                                    Crossfade(
+                                        targetState = mode,
+                                        label = "ProfileMode"
+                                    ) { currentMode ->
+                                        when (currentMode) {
+                                            Mode.Template -> {
+                                                TemplateConfig(
+                                                    profile = profile,
+                                                    onViewTemplate = onViewTemplate,
+                                                    onManageTemplate = onManageTemplate,
+                                                    onProfileChange = onProfileChange
+                                                )
+                                            }
+
+                                            Mode.Custom -> {
+                                                RootProfileConfig(
+                                                    fixedName = true,
+                                                    profile = profile,
+                                                    onProfileChange = onProfileChange
+                                                )
+                                            }
+
+                                            else -> {}
                                         }
-                                        Mode.Custom -> {
-                                            RootProfileConfig(
-                                                fixedName = true,
-                                                profile = profile,
-                                                onProfileChange = onProfileChange
-                                            )
-                                        }
-                                        else -> {}
                                     }
                                 }
                             }
                         }
-                    }
-                } else {
-                    val mode = if (profile.nonRootUseDefault) Mode.Default else Mode.Custom
+                    } else {
+                        val mode = if (profile.nonRootUseDefault) Mode.Default else Mode.Custom
 
-                    ElevatedCard(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        shape = MaterialTheme.shapes.medium
-                    ) {
-                        ProfileBox(mode, false) {
-                            onProfileChange(profile.copy(nonRootUseDefault = (it == Mode.Default)))
-                        }
-                    }
-
-                    AnimatedVisibility(
-                        visible = mode == Mode.Custom,
-                        enter = fadeIn() + expandVertically(),
-                        exit = fadeOut() + shrinkVertically()
-                    ) {
                         ElevatedCard(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 8.dp),
-                            shape = MaterialTheme.shapes.medium
+                            shape = MaterialTheme.shapes.medium,
+                            colors = cardColors,
+                            elevation = getCardElevation(),
                         ) {
-                            Column(modifier = Modifier.padding(vertical = 8.dp)) {
-                                AppProfileConfig(
-                                    fixedName = true,
-                                    profile = profile,
-                                    enabled = mode == Mode.Custom,
-                                    onProfileChange = onProfileChange
-                                )
+                            ProfileBox(mode, false) {
+                                onProfileChange(profile.copy(nonRootUseDefault = (it == Mode.Default)))
+                            }
+                        }
+
+                        AnimatedVisibility(
+                            visible = mode == Mode.Custom,
+                            enter = fadeIn() + expandVertically(),
+                            exit = fadeOut() + shrinkVertically()
+                        ) {
+                            ElevatedCard(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                shape = MaterialTheme.shapes.medium,
+                                colors = cardColors,
+                                elevation = getCardElevation(),
+                            ) {
+                                Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                                    AppProfileConfig(
+                                        fixedName = true,
+                                        profile = profile,
+                                        enabled = mode == Mode.Custom,
+                                        onProfileChange = onProfileChange
+                                    )
+                                }
                             }
                         }
                     }
@@ -355,7 +342,7 @@ private fun AppProfileInner(
     }
 }
 
-private enum class Mode(@StringRes private val res: Int) {
+private enum class Mode(@param:StringRes private val res: Int) {
     Default(R.string.profile_default), Template(R.string.profile_template), Custom(R.string.profile_custom);
 
     val text: String
@@ -377,12 +364,10 @@ private fun TopBar(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = packageName,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.alpha(0.8f)
                 )
             }
@@ -391,9 +376,6 @@ private fun TopBar(
         navigationIcon = {
             IconButton(
                 onClick = onBack,
-                colors = IconButtonDefaults.iconButtonColors(
-                    contentColor = MaterialTheme.colorScheme.onSurface
-                )
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -408,7 +390,6 @@ private fun TopBar(
         modifier = Modifier.shadow(
             elevation = if ((scrollBehavior?.state?.overlappedFraction ?: 0f) > 0.01f)
                 4.dp else 0.dp,
-            spotColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
         )
     )
 }
@@ -431,7 +412,6 @@ private fun ProfileBox(
                 Text(
                     text = mode.text,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             },
             leadingContent = {
@@ -444,7 +424,6 @@ private fun ProfileBox(
 
         HorizontalDivider(
             thickness = Dp.Hairline,
-            color = MaterialTheme.colorScheme.outlineVariant
         )
 
         ListItem(
@@ -574,20 +553,26 @@ private fun AppMenuOption(text: String, onClick: () -> Unit) {
 @Composable
 private fun AppProfilePreview() {
     var profile by remember { mutableStateOf(Natives.Profile("")) }
-    Surface {
-        AppProfileInner(
-            packageName = "icu.nullptr.test",
-            appLabel = "Test",
-            appIcon = {
-                Icon(
-                    imageVector = Icons.Filled.Android,
-                    contentDescription = null,
-                )
-            },
-            profile = profile,
-            onProfileChange = {
-                profile = it
-            },
+    MaterialTheme(
+        colorScheme = MaterialTheme.colorScheme.copy(
+            surface = if (CardConfig.isCustomBackgroundEnabled) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHigh
         )
+    ) {
+        Surface {
+            AppProfileInner(
+                packageName = "icu.nullptr.test",
+                appLabel = "Test",
+                appIcon = {
+                    Icon(
+                        imageVector = Icons.Filled.Android,
+                        contentDescription = null,
+                    )
+                },
+                profile = profile,
+                onProfileChange = {
+                    profile = it
+                },
+            )
+        }
     }
 }

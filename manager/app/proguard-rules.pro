@@ -40,8 +40,9 @@
 
 
 # MMRL:webui reflection
--keep class com.dergoogler.mmrl.webui.model.ModId { *; }
 -keep class com.dergoogler.mmrl.webui.interfaces.** { *; }
 -keep class com.sukisu.ultra.ui.webui.WebViewInterface { *; }
 
 -keep,allowobfuscation class * extends com.dergoogler.mmrl.platform.content.IService { *; }
+
+-keep interface com.sukisu.zako.** { *; }

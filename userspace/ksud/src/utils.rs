@@ -1,27 +1,25 @@
-use anyhow::{Context, Error, Ok, Result, bail};
+#[cfg(unix)]
+use std::os::unix::prelude::PermissionsExt;
 use std::{
-    fs::{self, File, OpenOptions, create_dir_all, remove_file, write},
+    fs::{self, create_dir_all, remove_file, write, File, OpenOptions, set_permissions},
+    fs::Permissions,
     io::{
         ErrorKind::{AlreadyExists, NotFound},
         Write,
     },
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
 };
 
-use crate::{assets, boot_patch, defs, ksucalls, module, restorecon};
-#[allow(unused_imports)]
-use std::fs::{Permissions, set_permissions};
-#[cfg(unix)]
-use std::os::unix::prelude::PermissionsExt;
-
-use std::path::PathBuf;
-
+use anyhow::{Context, Error, Ok, Result, bail};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use rustix::{
     process,
     thread::{LinkNameSpaceType, move_into_link_name_space},
 };
+
+use crate::{assets, boot_patch, defs, ksucalls, module, restorecon};
+use crate::defs::FORCE_SAFE_MODE_FLAG;
 
 pub fn ensure_clean_dir(dir: impl AsRef<Path>) -> Result<()> {
     let path = dir.as_ref();
@@ -74,11 +72,11 @@ pub fn ensure_binary<T: AsRef<Path>>(
         )
     })?)?;
 
-    if let Err(e) = remove_file(path.as_ref()) {
-        if e.kind() != NotFound {
-            return Err(Error::from(e))
-                .with_context(|| format!("failed to unlink {}", path.as_ref().display()));
-        }
+    if let Err(e) = remove_file(path.as_ref())
+        && e.kind() != NotFound
+    {
+        return Err(Error::from(e))
+            .with_context(|| format!("failed to unlink {}", path.as_ref().display()));
     }
 
     write(&path, contents)?;
@@ -98,18 +96,21 @@ pub fn getprop(_prop: &str) -> Option<String> {
 }
 
 pub fn is_safe_mode() -> bool {
+    if Path::new(FORCE_SAFE_MODE_FLAG).exists() {
+        return true;
+    }
     let safemode = getprop("persist.sys.safemode")
         .filter(|prop| prop == "1")
         .is_some()
         || getprop("ro.sys.safemode")
             .filter(|prop| prop == "1")
             .is_some();
-    log::info!("safemode: {}", safemode);
+    log::info!("safemode: {safemode}");
     if safemode {
         return true;
     }
     let safemode = ksucalls::check_kernel_safemode();
-    log::info!("kernel_safemode: {}", safemode);
+    log::info!("kernel_safemode: {safemode}");
     safemode
 }
 
@@ -145,7 +146,7 @@ fn switch_cgroup(grp: &str, pid: u32) {
 
     let fp = OpenOptions::new().append(true).open(path);
     if let std::result::Result::Ok(mut fp) = fp {
-        let _ = writeln!(fp, "{pid}");
+        let _ = write!(fp, "{pid}");
     }
 }
 
@@ -186,14 +187,8 @@ fn is_ok_empty(dir: &str) -> bool {
     }
 }
 
-pub fn get_tmp_path() -> String {
-    let dirs = [
-        "/debug_ramdisk",
-        "/patch_hw",
-        "/oem",
-        "/root",
-        "/sbin",
-    ];
+pub fn find_tmp_path() -> String {
+    let dirs = ["/debug_ramdisk", "/patch_hw", "/oem", "/root", "/sbin"];
 
     // find empty directory
     for dir in dirs {
@@ -202,11 +197,6 @@ pub fn get_tmp_path() -> String {
         }
     }
     "".to_string()
-}
-
-pub fn get_work_dir() -> String {
-     let tmp_path = get_tmp_path();
-     format!("{}/workdir/", tmp_path)
 }
 
 #[cfg(target_os = "android")]

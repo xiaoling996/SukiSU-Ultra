@@ -1,8 +1,8 @@
 @file:Suppress("UnstableApiUsage")
 
-import com.android.build.api.dsl.ApkSigningConfig
 import com.android.build.gradle.internal.api.BaseVariantOutputImpl
 import com.android.build.gradle.tasks.PackageAndroidArtifact
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.agp.app)
@@ -42,6 +42,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            vcsInfo.include = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         /**debug {
@@ -50,13 +51,14 @@ android {
     }
 
     buildFeatures {
+        aidl = true
         buildConfig = true
         compose = true
         prefab = true
     }
 
-    kotlinOptions {
-        jvmTarget = "21"
+    kotlin {
+        jvmToolchain(21)
     }
 
     packaging {
@@ -107,7 +109,12 @@ android {
     }
 }
 
+ksp {
+    arg("compose-destinations.defaultTransitions", "none")
+}
+
 dependencies {
+    implementation(libs.gson)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.navigation.compose)
 
@@ -157,5 +164,7 @@ dependencies {
     compileOnly(libs.mmrl.hidden.api)
     implementation(libs.mmrl.webui)
     implementation(libs.mmrl.ui)
+
+    implementation(libs.accompanist.drawablepainter)
 
 }

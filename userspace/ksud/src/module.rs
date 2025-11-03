@@ -1,18 +1,6 @@
-#[allow(clippy::wildcard_imports)]
-use crate::utils::*;
-use crate::{
-    assets, defs, ksucalls,
-    restorecon::{restore_syscon, setsyscon},
-    sepolicy,
-};
-
-use anyhow::{Context, Result, anyhow, bail, ensure};
-use const_format::concatcp;
-use is_executable::is_executable;
-use java_properties::PropertiesIter;
-use log::{info, warn};
-
 use std::fs::{copy, rename};
+#[cfg(unix)]
+use std::os::unix::{prelude::PermissionsExt, process::CommandExt};
 use std::{
     collections::HashMap,
     env::var as env_var,
@@ -22,11 +10,23 @@ use std::{
     process::Command,
     str::FromStr,
 };
+
+use anyhow::{Context, Result, anyhow, bail, ensure};
+use const_format::concatcp;
+use is_executable::is_executable;
+use java_properties::PropertiesIter;
+use log::{info, warn};
 use zip_extensions::zip_extract_file_to_memory;
 
-use crate::defs::{MODULE_DIR, MODULE_UPDATE_DIR, UPDATE_FILE_NAME};
-#[cfg(unix)]
-use std::os::unix::{prelude::PermissionsExt, process::CommandExt};
+#[allow(clippy::wildcard_imports)]
+use crate::{
+    assets,
+    defs::{self, MODULE_DIR, MODULE_UPDATE_DIR, UPDATE_FILE_NAME},
+    ksucalls,
+    restorecon::{restore_syscon, setsyscon},
+    sepolicy,
+    utils::*,
+};
 
 const INSTALLER_CONTENT: &str = include_str!("./installer.sh");
 const INSTALL_MODULE_SCRIPT: &str = concatcp!(
@@ -54,6 +54,7 @@ fn exec_install_script(module_file: &str) -> Result<()> {
             ),
         )
         .env("KSU", "true")
+        .env("KSU_SUKISU", "true")
         .env("KSU_KERNEL_VER_CODE", ksucalls::get_version().to_string())
         .env("KSU_VER", defs::VERSION_NAME)
         .env("KSU_VER_CODE", defs::VERSION_CODE)
@@ -170,6 +171,7 @@ fn exec_script<T: AsRef<Path>>(path: T, wait: bool) -> Result<()> {
         .arg(path.as_ref())
         .env("ASH_STANDALONE", "1")
         .env("KSU", "true")
+        .env("KSU_SUKISU", "true")
         .env("KSU_KERNEL_VER_CODE", ksucalls::get_version().to_string())
         .env("KSU_VER_CODE", defs::VERSION_CODE)
         .env("KSU_VER", defs::VERSION_NAME)
@@ -254,10 +256,10 @@ pub fn prune_modules() -> Result<()> {
             info!("remove module: {}", module.display());
 
             let uninstaller = module.join("uninstall.sh");
-            if uninstaller.exists() {
-                if let Err(e) = exec_script(uninstaller, true) {
-                    warn!("Failed to exec uninstaller: {}", e);
-                }
+            if uninstaller.exists()
+                && let Err(e) = exec_script(uninstaller, true)
+            {
+                warn!("Failed to exec uninstaller: {}", e);
             }
 
             if let Err(e) = remove_dir_all(module) {
@@ -281,10 +283,10 @@ pub fn handle_updated_modules() -> Result<()> {
 
         if let Some(name) = module.file_name() {
             let old_dir = modules_root.join(name);
-            if old_dir.exists() {
-                if let Err(e) = remove_dir_all(&old_dir) {
-                    log::error!("Failed to remove old {}: {}", old_dir.display(), e);
-                }
+            if old_dir.exists()
+                && let Err(e) = remove_dir_all(&old_dir)
+            {
+                log::error!("Failed to remove old {}: {}", old_dir.display(), e);
             }
             if let Err(e) = rename(module, &old_dir) {
                 log::error!("Failed to move new module {}: {}", module.display(), e);
@@ -399,7 +401,7 @@ pub fn restore_uninstall_module(id: &str) -> Result<()> {
 }
 
 pub fn run_action(id: &str) -> Result<()> {
-    let action_script_path = format!("/data/adb/modules/{}/action.sh", id);
+    let action_script_path = format!("/data/adb/modules/{id}/action.sh");
     exec_script(&action_script_path, true)
 }
 
@@ -432,6 +434,28 @@ fn mark_all_modules(flag_file: &str) -> Result<()> {
     Ok(())
 }
 
+/// Read module.prop from the given module path and return as a HashMap
+pub fn read_module_prop(module_path: &Path) -> Result<HashMap<String, String>> {
+    let module_prop = module_path.join("module.prop");
+    ensure!(
+        module_prop.exists(),
+        "module.prop not found in {}",
+        module_path.display()
+    );
+
+    let content = std::fs::read(&module_prop)
+        .with_context(|| format!("Failed to read module.prop: {}", module_prop.display()))?;
+
+    let mut prop_map: HashMap<String, String> = HashMap::new();
+    PropertiesIter::new_with_encoding(Cursor::new(content), encoding_rs::UTF_8)
+        .read_into(|k, v| {
+            prop_map.insert(k, v);
+        })
+        .with_context(|| format!("Failed to parse module.prop: {}", module_prop.display()))?;
+
+    Ok(prop_map)
+}
+
 fn _list_modules(path: &str) -> Vec<HashMap<String, String>> {
     // first check enabled modules
     let dir = std::fs::read_dir(path);
@@ -444,22 +468,19 @@ fn _list_modules(path: &str) -> Vec<HashMap<String, String>> {
     for entry in dir.flatten() {
         let path = entry.path();
         info!("path: {}", path.display());
-        let module_prop = path.join("module.prop");
-        if !module_prop.exists() {
+
+        if !path.join("module.prop").exists() {
             continue;
         }
-        let content = std::fs::read(&module_prop);
-        let Ok(content) = content else {
-            warn!("Failed to read file: {}", module_prop.display());
-            continue;
+        let mut module_prop_map = match read_module_prop(&path) {
+            Ok(prop) => prop,
+            Err(e) => {
+                warn!("Failed to read module.prop for {}: {}", path.display(), e);
+                continue;
+            }
         };
-        let mut module_prop_map: HashMap<String, String> = HashMap::new();
-        let encoding = encoding_rs::UTF_8;
-        let result =
-            PropertiesIter::new_with_encoding(Cursor::new(content), encoding).read_into(|k, v| {
-                module_prop_map.insert(k, v);
-            });
 
+        // If id is missing or empty, use directory name as fallback
         let dir_id = entry.file_name().to_string_lossy().to_string();
         module_prop_map.insert("dir_id".to_owned(), dir_id.clone());
 
@@ -481,10 +502,6 @@ fn _list_modules(path: &str) -> Vec<HashMap<String, String>> {
         module_prop_map.insert("web".to_owned(), web.to_string());
         module_prop_map.insert("action".to_owned(), action.to_string());
 
-        if result.is_err() {
-            warn!("Failed to parse module.prop: {}", module_prop.display());
-            continue;
-        }
         modules.push(module_prop_map);
     }
 
@@ -495,4 +512,52 @@ pub fn list_modules() -> Result<()> {
     let modules = _list_modules(defs::MODULE_DIR);
     println!("{}", serde_json::to_string_pretty(&modules)?);
     Ok(())
+}
+
+/// Get all managed features from active modules
+/// Modules can specify ksu_managed_features in their module.prop
+/// Format: ksu_managed_features=feature1,feature2,feature3
+/// Returns: HashMap<ModuleId, Vec<ManagedFeature>>
+pub fn get_managed_features() -> Result<HashMap<String, Vec<String>>> {
+    let mut managed_features_map: HashMap<String, Vec<String>> = HashMap::new();
+
+    foreach_active_module(|module_path| {
+        let prop_map = match read_module_prop(module_path) {
+            Ok(prop) => prop,
+            Err(e) => {
+                warn!(
+                    "Failed to read module.prop for {}: {}",
+                    module_path.display(),
+                    e
+                );
+                return Ok(());
+            }
+        };
+
+        if let Some(features_str) = prop_map.get("ksu_managed_features") {
+            let module_id = prop_map
+                .get("id")
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            info!("Module {} manages features: {}", module_id, features_str);
+
+            let mut feature_list = Vec::new();
+            for feature in features_str.split(',') {
+                let feature = feature.trim();
+                if !feature.is_empty() {
+                    info!("  - Adding managed feature: {}", feature);
+                    feature_list.push(feature.to_string());
+                }
+            }
+
+            if !feature_list.is_empty() {
+                managed_features_map.insert(module_id, feature_list);
+            }
+        }
+
+        Ok(())
+    })?;
+
+    Ok(managed_features_map)
 }
