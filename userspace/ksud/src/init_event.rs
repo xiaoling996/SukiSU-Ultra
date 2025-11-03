@@ -2,7 +2,7 @@
 use crate::kpm;
 use crate::{
     assets, defs,
-    defs::{KSU_MOUNT_SOURCE, NO_MOUNT_PATH, NO_TMPFS_PATH},
+    defs::{FORCE_SAFE_MODE_FLAG, KSU_MOUNT_SOURCE, NO_MOUNT_PATH, NO_TMPFS_PATH},
     ksucalls,
     module::{handle_updated_modules, prune_modules},
     restorecon, uid_scanner, utils,
@@ -10,7 +10,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use log::{info, warn};
-use rustix::fs::{MountFlags, mount};
+use rustix::fs::{mount, MountFlags};
 use std::path::Path;
 
 #[cfg(target_os = "android")]
@@ -36,6 +36,17 @@ pub fn on_post_data_fs() -> Result<()> {
     if utils::has_magisk() {
         warn!("Magisk detected, skip post-fs-data!");
         return Ok(());
+    }
+
+    let version = ksucalls::get_version();
+    if version == 0 || version < 13490 {
+        log::warn!(
+            "KernelSU version too old ({version}), forcing safe mode! Please bump the kernel version!"
+        );
+        std::fs::write(FORCE_SAFE_MODE_FLAG, "1").ok();
+        return Ok(());
+    } else {
+        std::fs::remove_file(FORCE_SAFE_MODE_FLAG).ok();
     }
 
     let safe_mode = utils::is_safe_mode();

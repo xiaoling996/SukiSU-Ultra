@@ -56,6 +56,7 @@ import com.sukisu.ultra.ui.util.getSuSFS
 import com.sukisu.ultra.ui.util.module.LatestVersionInfo
 import com.sukisu.ultra.ui.util.reboot
 import com.sukisu.ultra.ui.viewmodel.HomeViewModel
+import com.topjohnwu.superuser.io.SuFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -141,6 +142,12 @@ fun HomeScreen(navigator: DestinationsNavigator) {
                             navigator.navigate(InstallScreenDestination(preselectedKernelUri = null))
                         }
                     )
+                    
+                    val forceSafeModePath = remember { SuFile("/data/adb/ksu/.force_safe_mode") }
+                    if (forceSafeModePath.exists()) {
+                        IncompatibleKernelCard()
+                        Spacer(Modifier.height(12.dp))
+                    }
 
                     // 警告信息
                     if (viewModel.systemStatus.requireNewKernel) {
@@ -889,6 +896,23 @@ private fun StatusCardPreview() {
             )
         )
     }
+}
+
+@Composable
+private fun IncompatibleKernelCard() {
+    val currentKver = remember { Natives.version }
+    val threshold   = Natives.MINIMAL_NEW_IOCTL_KERNEL
+
+    val msg = stringResource(
+        id = R.string.incompatible_kernel_msg,
+        currentKver,
+        threshold
+    )
+
+    WarningCard(
+        message = msg,
+        color = MaterialTheme.colorScheme.error
+    )
 }
 
 @Preview

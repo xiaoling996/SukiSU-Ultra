@@ -1,8 +1,8 @@
 #[cfg(unix)]
 use std::os::unix::prelude::PermissionsExt;
 use std::{
-    fs::{self, File, OpenOptions, create_dir_all, remove_file, write},
-    fs::{Permissions, set_permissions},
+    fs::{self, create_dir_all, remove_file, write, File, OpenOptions, set_permissions},
+    fs::Permissions,
     io::{
         ErrorKind::{AlreadyExists, NotFound},
         Write,
@@ -19,6 +19,7 @@ use rustix::{
 };
 
 use crate::{assets, boot_patch, defs, ksucalls, module, restorecon};
+use crate::defs::FORCE_SAFE_MODE_FLAG;
 
 pub fn ensure_clean_dir(dir: impl AsRef<Path>) -> Result<()> {
     let path = dir.as_ref();
@@ -95,6 +96,9 @@ pub fn getprop(_prop: &str) -> Option<String> {
 }
 
 pub fn is_safe_mode() -> bool {
+    if Path::new(FORCE_SAFE_MODE_FLAG).exists() {
+        return true;
+    }
     let safemode = getprop("persist.sys.safemode")
         .filter(|prop| prop == "1")
         .is_some()
